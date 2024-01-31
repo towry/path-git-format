@@ -1,0 +1,11 @@
+[package]
+name = "path-git-format"
+description = "Cli tool to format path(s) with git information"
+authors = ["Towry Wang <tovvry@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/towry/path-git-format"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
