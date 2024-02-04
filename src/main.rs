@@ -4,6 +4,7 @@ use std::path::Path;
 
 // iterate the stdin lines: https://doc.rust-lang.org/std/io/struct.Stdin.html#method.lines
 
+#[derive(Debug)]
 struct Options {
     format: Option<String>,
     cwd: Option<Box<Path>>,
@@ -24,9 +25,10 @@ fn main() -> io::Result<()> {
 
     let options = Options {
         format: args.format,
-        cwd: None,
-        // cwd: Box::new(Path::from(args.cwd.
+        cwd: args.cwd.map(|c| Path::new(&c).into()),
     };
+
+    println!("{:?}", options);
 
     let mut buffer = String::new();
     let stdin = io::stdin();
