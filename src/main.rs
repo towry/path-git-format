@@ -108,10 +108,14 @@ async fn process_line(opts: &CliOptions, line: &str) -> Option<String> {
     let mut gitinfo = GitInfo::new(segments, opts.nth);
     gitinfo.update_branch().await;
 
+    if gitinfo.branch.is_none() {
+        return Some(gitinfo.path_str().unwrap_or("").to_owned());
+    }
+
     let mut vars = HashMap::<String, &str>::new();
     vars.insert("path".to_owned(), gitinfo.path_str().unwrap_or(""));
     vars.insert("branch".to_owned(), gitinfo.branch.as_deref().unwrap_or(""));
 
-    let fmt = opts.format.as_deref().unwrap_or("");
+    let fmt = opts.format.as_deref().unwrap_or("{path} {branch}");
     strfmt(fmt, &vars).ok()
 }
