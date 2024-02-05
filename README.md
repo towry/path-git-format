@@ -31,3 +31,19 @@ zoxide query --list --score | path-git-format --nth 1 --format "{path}: {branch}
 ```
 
 So you can use it with `fzf` to search paths along with git branch.
+
+## Install
+
+### Prerequisites
+
+- cargo
+- git
+
+### Install from source
+
+```bash
+git clone --depth=1 git@github.com:towry/path-git-format.git
+cd path-git-format
+# will install `path-git-format` into `/usr/local/bin`
+make install
+```
