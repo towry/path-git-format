@@ -39,7 +39,13 @@ So you can use it with `fzf` to search paths along with git branch.
 - cargo
 - git
 
-### Install from source
+### Install with cargo
+
+```
+cargo install --git https://github.com/towry/path-git-format
+```
+
+### Build and Install from source
 
 ```bash
 git clone --depth=1 git@github.com:towry/path-git-format.git
