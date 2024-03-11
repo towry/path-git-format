@@ -12,6 +12,7 @@ use tokio_stream::StreamExt;
 struct CliOptions {
     format: Option<String>,
     nth: usize,
+    filter: bool,
 }
 
 #[derive(Debug)]
@@ -34,7 +35,6 @@ impl<'a> GitInfo<'a> {
         self.segments.get(self.path_index).copied()
     }
 
-    // git rev-parse --resolve-git-dir <path> -- git symbolic-ref --short HEAD
     async fn update_branch(&mut self) {
         let path = self.path_str();
         if path.is_none() {
@@ -44,10 +44,12 @@ impl<'a> GitInfo<'a> {
         let Some(repo) = repo else {
             return;
         };
-        let branch: String = repo.head().map_or("".to_owned(), |head| {
-            head.shorthand().map_or("".to_owned(), |x| x.to_owned())
-        });
-        self.branch = Some(branch);
+        let branch = repo
+            .head()
+            .map(|head| head.shorthand().map(|s| s.to_owned()))
+            .ok()
+            .flatten();
+        self.branch = branch
     }
 }
 
@@ -60,6 +62,9 @@ struct Args {
     // parse input
     #[arg(short, long)]
     nth: Option<usize>,
+    // ignore paths that not under git repo
+    #[arg(long)]
+    filter: Option<bool>,
 }
 
 #[tokio::main]
@@ -69,6 +74,7 @@ async fn main() -> io::Result<()> {
     let opts = CliOptions {
         format: args.format,
         nth: args.nth.map_or(0, |x| x),
+        filter: args.filter.unwrap_or(false),
     };
 
     read_io_paths(&opts).await
@@ -102,6 +108,10 @@ async fn process_line(opts: &CliOptions, line: &str) -> Option<String> {
     let segments = line.trim().split(' ').collect::<Vec<&str>>();
     let mut gitinfo = GitInfo::new(segments, opts.nth);
     gitinfo.update_branch().await;
+
+    if gitinfo.branch.is_none() && opts.filter {
+        return None;
+    }
 
     if gitinfo.branch.is_none() {
         return Some(gitinfo.path_str().unwrap_or("").to_owned());
