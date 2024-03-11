@@ -1,8 +1,9 @@
 use clap::Parser;
+use git2::Repository;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use strfmt::strfmt;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
 use tokio_stream::wrappers::LinesStream;
 #[allow(unused_imports)]
 use tokio_stream::StreamExt;
@@ -39,20 +40,14 @@ impl<'a> GitInfo<'a> {
         if path.is_none() {
             return;
         }
-        let Ok(output) = Command::new("git")
-            .args(["-C", path.unwrap(), "symbolic-ref", "--short", "HEAD"])
-            .kill_on_drop(true)
-            .output()
-            .await else {
-            return
+        let repo = Repository::open(PathBuf::from(path.unwrap())).ok();
+        let Some(repo) = repo else {
+            return;
         };
-        if output.status.success() {
-            self.branch = String::from_utf8(output.stdout).ok().map(|s| {
-                s.strip_suffix("\r\n")
-                    .or(s.strip_suffix('\n'))
-                    .map_or(s.clone(), |x| x.to_owned())
-            });
-        }
+        let branch: String = repo.head().map_or("".to_owned(), |head| {
+            head.shorthand().map_or("".to_owned(), |x| x.to_owned())
+        });
+        self.branch = Some(branch);
     }
 }
 
