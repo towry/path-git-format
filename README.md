@@ -72,3 +72,9 @@ function jump --description "Zoxide jump with git branch in path"
   end
 end
 ```
+
+Video presentation:
+
+https://github.com/towry/path-git-format/assets/8279858/30c5d166-9a30-4445-ac90-4593fb01fa6c
+
+
