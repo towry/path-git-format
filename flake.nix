@@ -24,9 +24,15 @@
         sha256 = "sha256-jUR2Sd3jhDJIvcuMLBgxtTqa3ELWF38V7IqoZT8EzVU=";
         # sha256 = nixpkgs.lib.fakeSha256;
       };
+      buildInputs =
+        [
+          pkgs.openssl
+        ]
+        ++ nixpkgs.lib.optionals pkgs.stdenv.isDarwin [pkgs.libiconv pkgs.darwin.apple_sdk.frameworks.Security];
     in {
-      devShell = pkgs.mkShell {
-        packages = [rust];
+      devShells.default = pkgs.mkShell {
+        packages = [rust pkgs.pkg-config];
+        buildInputs = buildInputs;
       };
       packages = {
         default = pkgs.stdenv.mkDerivation {
@@ -34,11 +40,7 @@
           version = "${manifest.version}";
           src = self;
           nativeBuildInputs = [rust pkgs.pkg-config];
-          buildInputs =
-            [
-              pkgs.openssl
-            ]
-            ++ nixpkgs.lib.optionals pkgs.stdenv.isDarwin [pkgs.libiconv pkgs.darwin.apple_sdk.frameworks.Security];
+          buildInputs = buildInputs;
 
           buildPhase = ''
             export HOME=$(pwd)
@@ -46,7 +48,9 @@
             make release
           '';
           installPhase = ''
+            mkdir -p $out/bin
             cp ./target/release/path-git-format $out/bin/
+            tar -czvf path-git-format.tar.gz -C ./target/release/ path-git-format
           '';
           meta = {
             description = "A simple utility to format path with git repo info from stdin";
