@@ -21,7 +21,8 @@
       manifest = (nixpkgs.lib.importTOML ./Cargo.toml).package;
       rust = fenix.packages.${system}.fromToolchainFile {
         dir = ./.;
-        sha256 = "sha256-o/MRwGYjLPyD1zZQe3LX0dOynwRJpVygfF9+vSnqTOc=";
+        sha256 = "sha256-jUR2Sd3jhDJIvcuMLBgxtTqa3ELWF38V7IqoZT8EzVU=";
+        # sha256 = nixpkgs.lib.fakeSha256;
       };
     in {
       devShell = pkgs.mkShell {
@@ -33,12 +34,14 @@
           version = "${manifest.version}";
           src = self;
           nativeBuildInputs = [rust pkgs.pkg-config];
-          buildInputs = [
-            pkgs.openssl
-          ];
+          buildInputs =
+            [
+              pkgs.openssl
+            ]
+            ++ nixpkgs.lib.optionals pkgs.stdenv.isDarwin [pkgs.libiconv pkgs.darwin.apple_sdk.frameworks.Security];
 
           buildPhase = ''
-            export HOME=$TMPDIR
+            export HOME=$(pwd)
             cargo --version
             make release
           '';
