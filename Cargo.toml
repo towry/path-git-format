@@ -2,7 +2,7 @@
 name = "path-git-format"
 description = "Cli tool to format path(s) with git information"
 authors = ["Towry Wang <tovvry@gmail.com>"]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 repository = "https://github.com/towry/path-git-format"
 

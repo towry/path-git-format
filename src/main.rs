@@ -41,7 +41,8 @@ impl<'a> GitInfo<'a> {
         if path.is_none() {
             return;
         }
-        let repo = Repository::open(PathBuf::from(path.unwrap())).ok();
+        let path = PathBuf::from(path.unwrap());
+        let repo = Repository::open(&path).ok();
         let Some(repo) = repo else {
             return;
         };
@@ -49,6 +50,12 @@ impl<'a> GitInfo<'a> {
         if opts.no_bare && repo.is_bare() {
             return;
         }
+
+        // filter out useless folder at <repo>/worktrees/<folder>
+        if Some(path.as_path()) != repo.workdir() {
+            return;
+        }
+
         let branch = repo
             .head()
             .map(|head| head.shorthand().map(|s| s.to_owned()))
