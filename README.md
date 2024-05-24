@@ -1,6 +1,5 @@
 [![CI](https://github.com/towry/path-git-format/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/towry/path-git-format/actions/workflows/ci.yml) ![GitHub Release](https://img.shields.io/github/v/release/towry/path-git-format) ![GitHub top language](https://img.shields.io/github/languages/top/towry/path-git-format)
 
-
 # path-git-format
 
 Cli tool to format path(s) with git information.
@@ -11,7 +10,7 @@ Cli tool to format path(s) with git information.
 printf "$PWD" | path-git-format --format "{path}: {branch}" | fzf
 ```
 
-### Use with zoxide query
+### Use with zoxide query | [tldr; fish script](./extension/zoxide-path-git-format.fish)
 
 [zoxide](https://github.com/ajeetdsouza/zoxide)'s `query` command returns list of paths:
 
@@ -62,41 +61,10 @@ cd path-git-format
 make install
 ```
 
-## Snippet
+## Snippets
 
-Fish script to make `jump` works like zoxide but with git branch in paths, put
-this in your fish `config.fish`.
-
-```fish
-function jump --description "Zoxide jump with git branch in path"
-    set -l query "$argv"
-    set result (zoxide query --list --exclude $PWD | path-git-format --filter --no-bare -f"{path} [{branch}]" | awk -v home="$HOME" '{gsub(home, "~", $1); print $0}' | fzf --tiebreak=index -1 -0 --query="$query")
-    if test -n "$result"
-        set directory (echo $result | awk -F' ' '{print $1}' | awk -F'[' '{print $1}')
-        if test "$_ZO_ECHO" = "1"
-            echo "$directory"
-        end
-        eval cd $directory
-    end
-end
-
-
-function jump_first --description "Zoxide jump(first) with git branch in path"
-    set -l query "$argv"
-    set result (zoxide query --list --exclude $PWD | path-git-format --filter --no-bare -f"{path} [{branch}]" | awk -v home="$HOME" '{gsub(home, "~", $1); print $0}' | fzf --tiebreak=index --filter="$query" | head -n 1)
-    if test -n "$result"
-        set directory (echo $result | awk -F' ' '{print $1}' | awk -F'[' '{print $1}')
-        if test "$_ZO_ECHO" = "1"
-            echo "$directory"
-        end
-        eval cd $directory
-    end
-end
-
-```
+See [extension/](./extension)
 
 Video presentation:
 
 https://github.com/towry/path-git-format/assets/8279858/30c5d166-9a30-4445-ac90-4593fb01fa6c
-
-
