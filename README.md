@@ -1,3 +1,6 @@
+[![CI](https://github.com/towry/path-git-format/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/towry/path-git-format/actions/workflows/ci.yml) ![GitHub Release](https://img.shields.io/github/v/release/towry/path-git-format) ![GitHub top language](https://img.shields.io/github/languages/top/towry/path-git-format)
+
+
 # path-git-format
 
 Cli tool to format path(s) with git information.
