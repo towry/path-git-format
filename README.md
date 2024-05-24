@@ -65,6 +65,12 @@ make install
 
 See [extension/](./extension)
 
+- `zoxide-path-git-format.fish`: fish functions to quickly jump to folder with git
+  branch fuzzy match.
+- `nvim-fzf-lua-zoxide-folders.lua`: In neovim, you can open fzf-lua folders
+  picker with zoxide integration, to quickly change cwd like you does in
+  terminal.
+
 Video presentation:
 
 https://github.com/towry/path-git-format/assets/8279858/30c5d166-9a30-4445-ac90-4593fb01fa6c
