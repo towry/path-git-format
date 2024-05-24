@@ -37,6 +37,11 @@ So you can use it with `fzf` to search paths along with git branch.
 
 ## Install
 
+### Install binary release
+
+1. [Visit the Release page to download the appropriate tarball for your system](https://github.com/towry/path-git-format/releases)
+2. Extract the binary file and put it under your `$PATH` like `/user/local/bin`.
+
 ### Prerequisites
 
 - cargo
