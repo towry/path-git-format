@@ -117,11 +117,30 @@ async fn read_io_paths(opts: &CliOptions) -> io::Result<()> {
         let Some(result_line) = process_line(opts, &line).await else {
             continue;
         };
-        writter.write_all(result_line.as_bytes()).await?;
-        writter.write_all(b"\n").await?;
+
+        // Handle BrokenPipe errors gracefully - this happens when the downstream
+        // process closes the pipe early (e.g., head -n 1, fzf)
+        if let Err(e) = writter.write_all(result_line.as_bytes()).await {
+            if e.kind() == io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(e);
+        }
+        if let Err(e) = writter.write_all(b"\n").await {
+            if e.kind() == io::ErrorKind::BrokenPipe {
+                return Ok(());
+            }
+            return Err(e);
+        }
     }
 
-    writter.shutdown().await?;
+    // Ignore BrokenPipe on shutdown as well
+    if let Err(e) = writter.shutdown().await {
+        if e.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(());
+        }
+        return Err(e);
+    }
 
     Ok(())
 }
