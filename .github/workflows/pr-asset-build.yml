@@ -108,28 +108,22 @@ jobs:
           ref: ${{ needs.check_trigger.outputs.pr_head_sha }}
           fetch-depth: 0
 
-      - name: Install nix
-        uses: cachix/install-nix-action@v26
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          install_url: https://releases.nixos.org/nix/nix-2.22.1/install
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+          toolchain: stable
 
-      - name: Setup cachix cache
-        uses: cachix/cachix-action@v14
-        if: ${{ success() }}
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          name: towry
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          prefix-key: "v1-rust-pr-build"
 
-      - name: Build binary
-        run: |
-          nix develop --command bash -c "make release"
+      - name: Build release binary
+        run: cargo build --release --verbose
 
       - name: Test binary functionality
         shell: bash
         run: |
-          # Test the binary with stdin
           printf "/tmp\n\$PWD\n/var" | ./target/release/path-git-format --format "{path}: {branch}" || true
           echo "✅ Binary test passed for ${{ matrix.arch }}"
 

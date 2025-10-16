@@ -40,58 +40,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install nix
-        uses: cachix/install-nix-action@v26
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          install_url: https://releases.nixos.org/nix/nix-2.22.1/install
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+          toolchain: stable
 
-      - name: Setup cachix cache
-        uses: cachix/cachix-action@v14
-        if: ${{ success() }}
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          name: towry
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          prefix-key: "v1-rust-build"
 
       - name: Build release binary
-        run: |
-          nix develop --command bash -c "make release"
+        run: cargo build --release --verbose
 
       - name: Package artifact
         id: package
         shell: bash
         run: |
           version="${{ env.VERSION }}"
-          version="${version#v}" # strip leading v if present
+          version="${version#v}"
           staging="path-git-format-${version}-${{ matrix.arch }}-darwin"
           mkdir -p "$staging"
-
-          # Copy binary and README
           cp README.md "$staging/"
           cp target/release/path-git-format "$staging/"
-
-          # Add LICENSE if it exists
           if [ -f "LICENSE" ]; then
             cp LICENSE "$staging/"
           fi
-
-          # Create tarball
           tar czf "$staging.tar.gz" "$staging"
-
-          # Generate checksum
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$staging.tar.gz" > "$staging.tar.gz.sha256"
           elif command -v shasum >/dev/null 2>&1; then
             shasum -a 256 "$staging.tar.gz" > "$staging.tar.gz.sha256"
           fi
-
           echo "asset_path=$staging.tar.gz" >> $GITHUB_OUTPUT
           echo "asset_name=$staging.tar.gz" >> $GITHUB_OUTPUT
-
-          echo "✅ Created package: $staging.tar.gz"
-          echo "📦 Package contents:"
-          tar -tzf "$staging.tar.gz" | head -10
 
       - name: Upload asset
         uses: ncipollo/release-action@v1
