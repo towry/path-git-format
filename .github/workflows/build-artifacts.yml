@@ -1,0 +1,120 @@
+name: "Build release artifacts"
+
+on:
+  workflow_call:
+    inputs:
+      tag_name:
+        description: "Tag name (e.g. v1.2.3)"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag name (e.g. v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build & Upload Binaries
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-14]
+        include:
+          - runner: macos-14
+            arch: arm64
+            name: path-git-format-${{ inputs.tag_name || github.event.release.tag_name }}-aarch64-darwin.tar.gz
+    env:
+      VERSION: ${{ inputs.tag_name || github.event.release.tag_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install nix
+        uses: cachix/install-nix-action@v26
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.22.1/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Setup cachix cache
+        uses: cachix/cachix-action@v14
+        if: ${{ success() }}
+        with:
+          name: towry
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Build release binary
+        run: |
+          nix develop --command bash -c "make release"
+
+      - name: Package artifact
+        id: package
+        shell: bash
+        run: |
+          version="${{ env.VERSION }}"
+          version="${version#v}" # strip leading v if present
+          staging="path-git-format-${version}-${{ matrix.arch }}-darwin"
+          mkdir -p "$staging"
+
+          # Copy binary and README
+          cp README.md "$staging/"
+          cp target/release/path-git-format "$staging/"
+
+          # Add LICENSE if it exists
+          if [ -f "LICENSE" ]; then
+            cp LICENSE "$staging/"
+          fi
+
+          # Create tarball
+          tar czf "$staging.tar.gz" "$staging"
+
+          # Generate checksum
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$staging.tar.gz" > "$staging.tar.gz.sha256"
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$staging.tar.gz" > "$staging.tar.gz.sha256"
+          fi
+
+          echo "asset_path=$staging.tar.gz" >> $GITHUB_OUTPUT
+          echo "asset_name=$staging.tar.gz" >> $GITHUB_OUTPUT
+
+          echo "✅ Created package: $staging.tar.gz"
+          echo "📦 Package contents:"
+          tar -tzf "$staging.tar.gz" | head -10
+
+      - name: Upload asset
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.VERSION }}
+          artifacts: ${{ steps.package.outputs.asset_path }}
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          omitNameDuringUpdate: true
+          omitPrereleaseDuringUpdate: true
+
+      - name: Generate binary info
+        shell: bash
+        run: |
+          echo "### Build Information for macOS ${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architecture**: ${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact**: ${{ steps.package.outputs.asset_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Size**: $(du -h ${{ steps.package.outputs.asset_path }} | cut -f1)" >> $GITHUB_STEP_SUMMARY
+
+          # Display checksum
+          if [ -f "${{ steps.package.outputs.asset_path }}.sha256" ]; then
+            echo "- **Checksum**:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat "${{ steps.package.outputs.asset_path }}.sha256" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi

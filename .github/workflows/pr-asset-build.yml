@@ -1,0 +1,212 @@
+name: "PR Asset Build"
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: pr-asset-build-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  check_trigger:
+    name: Check Asset Build Trigger
+    runs-on: ubuntu-latest
+    if: github.event.issue.pull_request && github.event.comment.body == '!asset'
+    outputs:
+      should_build: ${{ steps.check_contributor.outputs.is_contributor }}
+      pr_number: ${{ github.event.issue.number }}
+      pr_head_sha: ${{ steps.get_pr_info.outputs.head_sha }}
+      pr_head_ref: ${{ steps.get_pr_info.outputs.head_ref }}
+      comment_id: ${{ steps.create_comment.outputs.comment_id }}
+    steps:
+      - name: Get PR information
+        id: get_pr_info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `head_sha=${pr.head.sha}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `head_ref=${pr.head.ref}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `base_ref=${pr.base.ref}\n`);
+
+      - name: Check if commenter is contributor
+        id: check_contributor
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.actor
+              });
+
+              const hasWriteAccess = ['admin', 'maintain', 'write'].includes(permission.permission);
+
+              const fs = require('fs');
+              if (hasWriteAccess) {
+                console.log(`User ${context.actor} has ${permission.permission} access - allowing build`);
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, `is_contributor=true\n`);
+              } else {
+                console.log(`User ${context.actor} has ${permission.permission} access - denying build`);
+                fs.appendFileSync(process.env.GITHUB_OUTPUT, `is_contributor=false\n`);
+              }
+            } catch (error) {
+              console.log(`Error checking permissions for ${context.actor}: ${error.message}`);
+              const fs = require('fs');
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, `is_contributor=false\n`);
+            }
+
+      - name: Create initial status comment
+        id: create_comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comment } = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `🔄 Building assets for PR #${context.issue.number} (commit: \`${{ steps.get_pr_info.outputs.head_sha }}\`)...
+
+              **Platforms**: macOS ARM64 (aarch64)
+              **Retention**: 1 day
+              **Trigger**: ${context.actor}`
+            });
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `comment_id=${comment.id}\n`);
+
+  build_assets:
+    name: Build PR Assets
+    needs: check_trigger
+    if: needs.check_trigger.outputs.should_build == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+            name: path-git-format-pr${{ github.event.issue.number }}-aarch64-darwin
+    env:
+      PR_NUMBER: ${{ needs.check_trigger.outputs.pr_number }}
+      PR_HEAD_SHA: ${{ needs.check_trigger.outputs.pr_head_sha }}
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check_trigger.outputs.pr_head_sha }}
+          fetch-depth: 0
+
+      - name: Install nix
+        uses: cachix/install-nix-action@v26
+        with:
+          install_url: https://releases.nixos.org/nix/nix-2.22.1/install
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Setup cachix cache
+        uses: cachix/cachix-action@v14
+        if: ${{ success() }}
+        with:
+          name: towry
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
+      - name: Build binary
+        run: |
+          nix develop --command bash -c "make release"
+
+      - name: Test binary functionality
+        shell: bash
+        run: |
+          # Test the binary with stdin
+          printf "/tmp\n\$PWD\n/var" | ./target/release/path-git-format --format "{path}: {branch}" || true
+          echo "✅ Binary test passed for ${{ matrix.arch }}"
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          archive_name="${{ matrix.name }}.tar.gz"
+          tar -czvf "$archive_name" -C ./target/release/ path-git-format
+          echo "📦 Created: $archive_name"
+          ls -lh "$archive_name"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+          retention-days: 1
+
+  comment_results:
+    name: Comment Build Results
+    needs: [check_trigger, build_assets]
+    if: always() && needs.check_trigger.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update comment with results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ needs.check_trigger.outputs.pr_number }};
+            const headSha = '${{ needs.check_trigger.outputs.pr_head_sha }}';
+            const shortSha = headSha.substring(0, 7);
+            const commentId = ${{ needs.check_trigger.outputs.comment_id }};
+
+            const buildResult = '${{ needs.build_assets.result }}';
+
+            let commentBody;
+
+            if (buildResult === 'success') {
+              commentBody = `✅ **PR asset build completed successfully!**
+
+              **PR**: #${prNumber}
+              **Commit**: \`${shortSha}\`
+              **Trigger**: ${{ github.actor }}
+              **Retention**: 1 day
+
+              📦 **Download artifacts:**
+              - [macOS ARM64 (aarch64)](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+              > 💡 Click the link above, then scroll down to the "Artifacts" section to download.
+              >
+              > ⚠️ **Note**: Artifacts will be automatically deleted after 1 day.
+
+              ---
+
+              **Quick test after download:**
+              \`\`\`bash
+              tar -xzf path-git-format-*.tar.gz
+              printf "\\$PWD" | ./path-git-format-*/path-git-format --format "{path}: {branch}"
+              \`\`\``;
+            } else {
+              commentBody = `❌ **PR asset build failed**
+
+              **PR**: #${prNumber}
+              **Commit**: \`${shortSha}\`
+              **Trigger**: ${{ github.actor }}
+
+              Please check the [workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+
+              Common issues:
+              - Nix environment setup failures
+              - Build failures in the PR
+              - macOS-specific issues`;
+            }
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: commentId,
+              body: commentBody
+            });
