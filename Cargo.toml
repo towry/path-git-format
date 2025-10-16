@@ -20,4 +20,4 @@ tokio = { version = "^1", features = [
 tokio-stream = { version = "0.1", features = ["io-util"] }
 tokio-util = { version = "0.7" }
 strfmt = { version = "^0.2" }
-git2 = { version = "^0.18.0" }
+git2 = { version = "^0.18.0", default-features = false, features = ["https", "vendored-libgit2", "vendored-openssl"] }
