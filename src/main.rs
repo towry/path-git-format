@@ -2,6 +2,7 @@ use clap::Parser;
 use git2::Repository;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Command;
 use strfmt::strfmt;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio_stream::wrappers::LinesStream;
@@ -17,15 +18,15 @@ struct CliOptions {
 }
 
 #[derive(Debug)]
-struct GitInfo<'a> {
+struct VcsInfo<'a> {
     path_index: usize,
     segments: Vec<&'a str>,
     branch: Option<String>,
 }
 
-impl<'a> GitInfo<'a> {
+impl<'a> VcsInfo<'a> {
     fn new(segments: Vec<&'a str>, path_index: usize) -> Self {
-        GitInfo {
+        VcsInfo {
             path_index,
             segments,
             branch: None,
@@ -42,6 +43,18 @@ impl<'a> GitInfo<'a> {
             return;
         }
         let path = PathBuf::from(path.unwrap());
+
+        // First, try to detect if this is a jujutsu repository
+        let jj_dir = path.join(".jj");
+        if jj_dir.exists() && jj_dir.is_dir() {
+            // This is a jujutsu repository
+            if let Some(bookmark) = get_jj_bookmark(&path) {
+                self.branch = Some(bookmark);
+                return;
+            }
+        }
+
+        // Fall back to git detection
         let repo = Repository::open(&path).ok();
         let Some(repo) = repo else {
             return;
@@ -63,6 +76,34 @@ impl<'a> GitInfo<'a> {
             .flatten();
         self.branch = branch
     }
+}
+
+// Get the first bookmark from a jujutsu repository
+fn get_jj_bookmark(path: &PathBuf) -> Option<String> {
+    let output = Command::new("jj")
+        .args(["bookmark", "list"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let bookmarks_output = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the first bookmark name
+    // Format: "bookmark_name: commit_id description"
+    for line in bookmarks_output.lines() {
+        if let Some(colon_pos) = line.find(':') {
+            let bookmark_name = line[..colon_pos].trim().to_owned();
+            if !bookmark_name.is_empty() {
+                return Some(bookmark_name);
+            }
+        }
+    }
+
+    None
 }
 
 #[derive(Parser, Debug)]
@@ -148,20 +189,20 @@ async fn read_io_paths(opts: &CliOptions) -> io::Result<()> {
 async fn process_line(opts: &CliOptions, line: &str) -> Option<String> {
     // trim line .then separate line by space
     let segments = line.trim().split(' ').collect::<Vec<&str>>();
-    let mut gitinfo = GitInfo::new(segments, opts.nth);
-    gitinfo.update_branch(opts).await;
+    let mut vcsinfo = VcsInfo::new(segments, opts.nth);
+    vcsinfo.update_branch(opts).await;
 
-    if gitinfo.branch.is_none() && opts.filter {
+    if vcsinfo.branch.is_none() && opts.filter {
         return None;
     }
 
-    if gitinfo.branch.is_none() {
-        return Some(gitinfo.path_str().unwrap_or("").to_owned());
+    if vcsinfo.branch.is_none() {
+        return Some(vcsinfo.path_str().unwrap_or("").to_owned());
     }
 
     let mut vars = HashMap::<String, &str>::new();
-    vars.insert("path".to_owned(), gitinfo.path_str().unwrap_or(""));
-    vars.insert("branch".to_owned(), gitinfo.branch.as_deref().unwrap_or(""));
+    vars.insert("path".to_owned(), vcsinfo.path_str().unwrap_or(""));
+    vars.insert("branch".to_owned(), vcsinfo.branch.as_deref().unwrap_or(""));
 
     let fmt = opts.format.as_deref().unwrap_or("{path} {branch}");
     strfmt(fmt, &vars).ok()
