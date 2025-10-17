@@ -48,8 +48,8 @@ impl<'a> VcsInfo<'a> {
         let jj_dir = path.join(".jj");
         if jj_dir.exists() && jj_dir.is_dir() {
             // This is a jujutsu repository
-            if let Some(bookmark) = get_jj_bookmark(&path) {
-                self.branch = Some(bookmark);
+            if let Some(bookmarks) = get_jj_bookmarks(&path) {
+                self.branch = Some(bookmarks);
                 return;
             }
         }
@@ -78,32 +78,92 @@ impl<'a> VcsInfo<'a> {
     }
 }
 
-// Get the first bookmark from a jujutsu repository
-fn get_jj_bookmark(path: &PathBuf) -> Option<String> {
-    let output = Command::new("jj")
+// Get bookmarks from a jujutsu repository that point to commits in the working copy's ancestry
+fn get_jj_bookmarks(path: &PathBuf) -> Option<String> {
+    // First, get the current working copy commit using `jj log -r @`
+    let wc_output = Command::new("jj")
+        .args(["log", "-r", "@", "--no-graph", "-T", "commit_id"])
+        .current_dir(path)
+        .output()
+        .ok()?;
+
+    if !wc_output.status.success() {
+        return None;
+    }
+
+    let wc_commit_id = String::from_utf8_lossy(&wc_output.stdout).trim().to_owned();
+    if wc_commit_id.is_empty() {
+        return None;
+    }
+
+    // Get all local bookmarks (not remotes)
+    let bookmarks_output = Command::new("jj")
         .args(["bookmark", "list"])
         .current_dir(path)
         .output()
         .ok()?;
 
-    if !output.status.success() {
+    if !bookmarks_output.status.success() {
         return None;
     }
 
-    let bookmarks_output = String::from_utf8_lossy(&output.stdout);
+    let bookmarks_text = String::from_utf8_lossy(&bookmarks_output.stdout);
+    let mut matching_bookmarks = Vec::new();
 
-    // Parse the first bookmark name
+    // Parse bookmark list to find bookmarks pointing to commits in working copy's ancestry
     // Format: "bookmark_name: commit_id description"
-    for line in bookmarks_output.lines() {
+    for line in bookmarks_text.lines() {
+        // Skip lines that are indented (remote tracking bookmarks start with spaces)
+        if line.starts_with(' ') {
+            continue;
+        }
+
         if let Some(colon_pos) = line.find(':') {
-            let bookmark_name = line[..colon_pos].trim().to_owned();
-            if !bookmark_name.is_empty() {
-                return Some(bookmark_name);
+            let bookmark_name = line[..colon_pos].trim();
+
+            // Extract commit ID from the line (it's after the colon and space)
+            let rest = line[colon_pos + 1..].trim();
+            if let Some(space_pos) = rest.find(' ') {
+                let commit_id = &rest[..space_pos];
+
+                // Check if this commit is the working copy (compare prefixes since bookmark list shows short IDs)
+                if wc_commit_id.starts_with(commit_id) {
+                    matching_bookmarks.push(bookmark_name.to_owned());
+                } else {
+                    // Check if this commit is an ancestor of working copy using revset
+                    // The revset "commit_id::@" means commits from commit_id to @ (working copy)
+                    let ancestor_check = Command::new("jj")
+                        .args([
+                            "log",
+                            "-r",
+                            &format!("{}::@", commit_id),
+                            "--no-graph",
+                            "-T",
+                            "commit_id",
+                        ])
+                        .current_dir(path)
+                        .output()
+                        .ok()?;
+
+                    if ancestor_check.status.success() {
+                        let output_text = String::from_utf8_lossy(&ancestor_check.stdout);
+                        let output_len = output_text.trim().len();
+                        // Each commit ID is 40 chars. If we have >= 40 chars and the revset succeeded,
+                        // it means the bookmark is in the ancestry (including @)
+                        if output_len >= 40 {
+                            matching_bookmarks.push(bookmark_name.to_owned());
+                        }
+                    }
+                }
             }
         }
     }
 
-    None
+    if matching_bookmarks.is_empty() {
+        None
+    } else {
+        Some(matching_bookmarks.join(", "))
+    }
 }
 
 #[derive(Parser, Debug)]
