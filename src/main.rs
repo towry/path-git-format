@@ -118,6 +118,7 @@ fn get_jj_bookmarks(path: &std::path::Path) -> Option<String> {
 }
 
 // Helper to traverse commits following first-parent chain
+// Limited to last 10 commits for performance
 fn traverse_first_parent(
     repo: &jj_lib::repo::ReadonlyRepo,
     start_id: &jj_lib::backend::CommitId,
@@ -126,14 +127,22 @@ fn traverse_first_parent(
 ) {
     use jj_lib::repo::Repo;
 
+    const MAX_COMMITS: usize = 10;
     let mut current_id = start_id.clone();
+    let mut commit_count = 0;
 
     loop {
+        // Stop if we've checked enough commits
+        if commit_count >= MAX_COMMITS {
+            break;
+        }
+
         // Skip if already visited
         if visited.contains(&current_id) {
             break;
         }
         visited.insert(current_id.clone());
+        commit_count += 1;
 
         // Get local bookmarks for this commit
         let view = repo.view();
