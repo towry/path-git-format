@@ -167,13 +167,14 @@ fn traverse_first_parent(
 }
 
 // Create minimal jj configuration required for loading repos
+// Uses only built-in defaults, avoiding user config to prevent conflicts
 fn create_minimal_jj_config() -> Option<jj_lib::config::StackedConfig> {
     use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
-    use std::env;
 
     let mut config = StackedConfig::empty();
 
     // Add required defaults (based on jj-lib's misc.toml)
+    // This provides all necessary configuration without requiring user config
     let defaults_toml = r#"
         [fsmonitor]
         backend = "none"
@@ -211,16 +212,6 @@ fn create_minimal_jj_config() -> Option<jj_lib::config::StackedConfig> {
 
     if let Ok(layer) = ConfigLayer::parse(ConfigSource::Default, defaults_toml) {
         config.add_layer(layer);
-    }
-
-    // Try to load user config if available (will override defaults)
-    if let Ok(home) = env::var("HOME") {
-        let config_path = std::path::PathBuf::from(home).join(".config/jj/config.toml");
-        if config_path.exists() {
-            if let Ok(layer) = ConfigLayer::load_from_file(ConfigSource::User, config_path) {
-                config.add_layer(layer);
-            }
-        }
     }
 
     Some(config)
