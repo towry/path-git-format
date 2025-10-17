@@ -2,7 +2,11 @@
 
 # path-git-format
 
-Cli tool to format path(s) with git information.
+Cli tool to format path(s) with version control information.
+
+Supports:
+- **Git** repositories - displays branch names
+- **Jujutsu (jj)** repositories - displays bookmark names
 
 ## Usage
 
@@ -26,13 +30,20 @@ output:
 01  /Users/towry/projects/c
 ```
 
-We can use `path-git-format` to format those paths with git branch information.
+We can use `path-git-format` to format those paths with VCS branch/bookmark information.
 
 ```bash
 zoxide query --list --score | path-git-format --nth 1 --format "{path}: {branch}" | fzf
 ```
 
-So you can use it with `fzf` to search paths along with git branch.
+So you can use it with `fzf` to search paths along with git branch or jj bookmark information.
+
+## Features
+
+- **Git Support**: Automatically detects Git repositories and displays the current branch
+- **Jujutsu Support**: Automatically detects Jujutsu repositories and displays the first bookmark
+- **Fallback**: For non-VCS directories, returns just the path
+- **Filter Option**: Use `--filter` to exclude paths without VCS information
 
 ## Install
 
@@ -45,6 +56,7 @@ So you can use it with `fzf` to search paths along with git branch.
 
 - cargo
 - git
+- jj (optional, for Jujutsu repository support)
 
 ### Install with cargo
 
