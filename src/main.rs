@@ -2,7 +2,6 @@ use clap::Parser;
 use git2::Repository;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use strfmt::strfmt;
 use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio_stream::wrappers::LinesStream;
@@ -78,92 +77,144 @@ impl<'a> VcsInfo<'a> {
     }
 }
 
-// Get bookmarks from a jujutsu repository that point to commits in the working copy's ancestry
-fn get_jj_bookmarks(path: &PathBuf) -> Option<String> {
-    // First, get the current working copy commit using `jj log -r @`
-    let wc_output = Command::new("jj")
-        .args(["log", "-r", "@", "--no-graph", "-T", "commit_id"])
-        .current_dir(path)
-        .output()
-        .ok()?;
+// Get bookmarks from a jujutsu repository following first-parent ancestry from working copy
+fn get_jj_bookmarks(path: &std::path::Path) -> Option<String> {
+    use indexmap::IndexSet;
+    use jj_lib::local_working_copy::LocalWorkingCopyFactory;
+    use jj_lib::settings::UserSettings;
+    use jj_lib::workspace::Workspace;
+    use std::collections::HashSet;
 
-    if !wc_output.status.success() {
-        return None;
+    // Load workspace with minimal config
+    let store_factories = jj_lib::repo::StoreFactories::default();
+    let mut working_copy_factories: jj_lib::workspace::WorkingCopyFactories = Default::default();
+    working_copy_factories.insert("local".to_string(), Box::new(LocalWorkingCopyFactory {}));
+
+    // Create minimal user settings
+    let config = create_minimal_jj_config()?;
+    let settings = UserSettings::from_config(config).ok()?;
+
+    // Load the workspace and repo
+    let workspace =
+        Workspace::load(&settings, path, &store_factories, &working_copy_factories).ok()?;
+    let repo = workspace.repo_loader().load_at_head().ok()?;
+
+    // Get the working copy commit ID as the starting point
+    let wc_commit_id = repo.view().get_wc_commit_id(workspace.workspace_name())?;
+
+    // Traverse commits following first-parent chain
+    let mut visited = HashSet::new();
+    let mut bookmark_names = IndexSet::new();
+
+    // Start traversal from working copy commit
+    traverse_first_parent(&repo, wc_commit_id, &mut visited, &mut bookmark_names);
+
+    if bookmark_names.is_empty() {
+        None
+    } else {
+        // Return sorted, deduplicated bookmark names
+        Some(bookmark_names.into_iter().collect::<Vec<_>>().join(", "))
     }
+}
 
-    let wc_commit_id = String::from_utf8_lossy(&wc_output.stdout).trim().to_owned();
-    if wc_commit_id.is_empty() {
-        return None;
-    }
+// Helper to traverse commits following first-parent chain
+fn traverse_first_parent(
+    repo: &jj_lib::repo::ReadonlyRepo,
+    start_id: &jj_lib::backend::CommitId,
+    visited: &mut std::collections::HashSet<jj_lib::backend::CommitId>,
+    bookmark_names: &mut indexmap::IndexSet<String>,
+) {
+    use jj_lib::repo::Repo;
 
-    // Get all local bookmarks (not remotes)
-    let bookmarks_output = Command::new("jj")
-        .args(["bookmark", "list"])
-        .current_dir(path)
-        .output()
-        .ok()?;
+    let mut current_id = start_id.clone();
 
-    if !bookmarks_output.status.success() {
-        return None;
-    }
+    loop {
+        // Skip if already visited
+        if visited.contains(&current_id) {
+            break;
+        }
+        visited.insert(current_id.clone());
 
-    let bookmarks_text = String::from_utf8_lossy(&bookmarks_output.stdout);
-    let mut matching_bookmarks = Vec::new();
-
-    // Parse bookmark list to find bookmarks pointing to commits in working copy's ancestry
-    // Format: "bookmark_name: commit_id description"
-    for line in bookmarks_text.lines() {
-        // Skip lines that are indented (remote tracking bookmarks start with spaces)
-        if line.starts_with(' ') {
-            continue;
+        // Get local bookmarks for this commit
+        let view = repo.view();
+        for (ref_name, _ref_target) in view.local_bookmarks_for_commit(&current_id) {
+            bookmark_names.insert(ref_name.as_str().to_owned());
         }
 
-        if let Some(colon_pos) = line.find(':') {
-            let bookmark_name = line[..colon_pos].trim();
+        // Load commit and get first parent
+        let commit = match repo.store().get_commit(&current_id) {
+            Ok(c) => c,
+            Err(_) => break,
+        };
 
-            // Extract commit ID from the line (it's after the colon and space)
-            let rest = line[colon_pos + 1..].trim();
-            if let Some(space_pos) = rest.find(' ') {
-                let commit_id = &rest[..space_pos];
+        // Follow first parent only (to handle merges linearly)
+        match commit.parent_ids().first() {
+            Some(parent_id) => {
+                current_id = parent_id.clone();
+            }
+            None => break, // Reached root
+        }
+    }
+}
 
-                // Check if this commit is the working copy (compare prefixes since bookmark list shows short IDs)
-                if wc_commit_id.starts_with(commit_id) {
-                    matching_bookmarks.push(bookmark_name.to_owned());
-                } else {
-                    // Check if this commit is an ancestor of working copy using revset
-                    // The revset "commit_id::@" means commits from commit_id to @ (working copy)
-                    let ancestor_check = Command::new("jj")
-                        .args([
-                            "log",
-                            "-r",
-                            &format!("{}::@", commit_id),
-                            "--no-graph",
-                            "-T",
-                            "commit_id",
-                        ])
-                        .current_dir(path)
-                        .output()
-                        .ok()?;
+// Create minimal jj configuration required for loading repos
+fn create_minimal_jj_config() -> Option<jj_lib::config::StackedConfig> {
+    use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
+    use std::env;
 
-                    if ancestor_check.status.success() {
-                        let output_text = String::from_utf8_lossy(&ancestor_check.stdout);
-                        let output_len = output_text.trim().len();
-                        // Each commit ID is 40 chars. If we have >= 40 chars and the revset succeeded,
-                        // it means the bookmark is in the ancestry (including @)
-                        if output_len >= 40 {
-                            matching_bookmarks.push(bookmark_name.to_owned());
-                        }
-                    }
-                }
+    let mut config = StackedConfig::empty();
+
+    // Add required defaults (based on jj-lib's misc.toml)
+    let defaults_toml = r#"
+        [fsmonitor]
+        backend = "none"
+        [git]
+        abandon-unreachable-commits = true
+        auto-local-bookmark = false
+        executable-path = "git"
+        write-change-id-header = true
+        colocate = true
+        [merge]
+        hunk-level = "line"
+        same-change = "accept"
+        [operation]
+        hostname = "localhost"
+        username = "user"
+        [signing]
+        backend = "none"
+        behavior = "keep"
+        [signing.backends.gpg]
+        allow-expired-keys = false
+        program = "gpg"
+        [signing.backends.gpgsm]
+        allow-expired-keys = false
+        program = "gpgsm"
+        [signing.backends.ssh]
+        program = "ssh-keygen"
+        [ui]
+        conflict-marker-style = "diff"
+        [user]
+        name = "path-git-format"
+        email = "path-git-format@localhost"
+        [working-copy]
+        eol-conversion = "none"
+    "#;
+
+    if let Ok(layer) = ConfigLayer::parse(ConfigSource::Default, defaults_toml) {
+        config.add_layer(layer);
+    }
+
+    // Try to load user config if available (will override defaults)
+    if let Ok(home) = env::var("HOME") {
+        let config_path = std::path::PathBuf::from(home).join(".config/jj/config.toml");
+        if config_path.exists() {
+            if let Ok(layer) = ConfigLayer::load_from_file(ConfigSource::User, config_path) {
+                config.add_layer(layer);
             }
         }
     }
 
-    if matching_bookmarks.is_empty() {
-        None
-    } else {
-        Some(matching_bookmarks.join(", "))
-    }
+    Some(config)
 }
 
 #[derive(Parser, Debug)]
